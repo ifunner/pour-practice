@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5a3826"/>
+      <stop offset="1" stop-color="#2a1a12"/>
+    </linearGradient>
+    <radialGradient id="crema" cx="0.45" cy="0.4" r="0.65">
+      <stop offset="0" stop-color="#c9884f"/>
+      <stop offset="0.7" stop-color="#9a5c32"/>
+      <stop offset="1" stop-color="#6e3f21"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e9dfd3"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- saucer -->
+  <circle cx="246" cy="266" r="190" fill="#000" opacity=".18"/>
+  <circle cx="240" cy="258" r="186" fill="#f1e8dd" opacity=".14"/>
+  <!-- handle -->
+  <rect x="380" y="232" width="84" height="52" rx="26" fill="url(#rim)"/>
+  <rect x="404" y="246" width="44" height="24" rx="12" fill="#2f1d14" opacity=".35"/>
+  <!-- cup -->
+  <circle cx="240" cy="258" r="150" fill="url(#rim)"/>
+  <circle cx="240" cy="258" r="124" fill="url(#crema)"/>
+  <!-- latte heart -->
+  <path d="M240 340
+           C 214 318, 168 290, 168 246
+           C 168 214, 192 194, 216 194
+           C 228 194, 236 200, 240 208
+           C 244 200, 252 194, 264 194
+           C 288 194, 312 214, 312 246
+           C 312 290, 266 318, 240 340 Z" fill="#fbf6ef"/>
+  <path d="M240 216 L 240 336" stroke="#b77744" stroke-width="5" stroke-linecap="round" opacity=".55"/>
+</svg>
