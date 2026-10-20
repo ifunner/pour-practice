@@ -48,6 +48,7 @@
   --cup:#ece5dc;--cup-shadow:#00000066;color-scheme:dark}
 
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%;margin:0}
 body{background:var(--bg);color:var(--text);font:16px/1.45 var(--font);-webkit-font-smoothing:antialiased;
   -webkit-user-select:none;user-select:none;overscroll-behavior:none;-webkit-tap-highlight-color:transparent}
@@ -111,6 +112,7 @@ ol.how li::marker{color:var(--accent);font-weight:600}
 .stat b small{font-size:16px;color:var(--muted);font-weight:500}
 .stage{flex:1;min-height:180px;position:relative}
 canvas#cup{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+.hint{position:absolute;left:0;right:0;bottom:0;margin:0;text-align:center;font-size:13px;color:var(--warn);pointer-events:none}
 .cue{background:var(--surface);border-radius:var(--r);padding:14px 16px;display:flex;flex-direction:column;gap:8px}
 .cue-top{display:flex;align-items:baseline;gap:10px}
 .cue .phase{font:700 22px/1.15 var(--display);letter-spacing:-.02em;flex:1;min-width:0}
@@ -202,6 +204,7 @@ canvas#chart{width:100%;height:160px;display:block}
       <ol class="how">
         <li>Hold the phone flat, screen up, in your cup hand, the way you'd hold a cup by its base.</li>
         <li>Hold an empty pitcher in your other hand and mime the pour over the screen. No real liquid.</li>
+        <li>Turn on Portrait Orientation Lock in Control Centre, or the screen flips sideways when you tilt.</li>
         <li>Follow the voice cues. The ring turns green when your cup tilt is on target.</li>
         <li>After each pour you get a tilt chart, a score per phase and one thing to fix.</li>
       </ol>
@@ -220,7 +223,8 @@ canvas#chart{width:100%;height:160px;display:block}
       <div class="stat"><span>Cup tilt</span><b id="tiltNum">0<small>°</small></b></div>
       <div class="stat"><span>Target</span><b id="targetNum">–</b></div>
     </div>
-    <div class="stage"><canvas id="cup" aria-label="Top-down view of the cup"></canvas></div>
+    <div class="stage"><canvas id="cup" aria-label="Top-down view of the cup"></canvas>
+      <p class="hint" id="dragHint" hidden>Motion is off. Drag down on the cup to tilt it.</p></div>
     <div class="cue">
       <div class="steps" id="steps"></div>
       <div class="cue-top"><span class="phase" id="phaseName">Get ready</span><span class="t" id="phaseT"></span></div>
@@ -288,48 +292,62 @@ const TIPS={
 const $=id=>document.getElementById(id);
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 let pattern="heart",tempo=1.5,cupScale=1,voice=true;
-let calib={b:0,g:0},raw={b:0,g:0},hasSensor=false,sensorSeen=false;
+let calib={x:0,y:0,z:1},raw={x:0,y:0,z:1},hasSensor=false,sensorSeen=false,listening=false;
 let tilt=0,dir={x:0,y:-1};
 let running=false,t0=0,log=[],phaseIdx=-2,lastTick=0,dragTilt=null,wakeLock=null,audio=null;
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
              set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
-calib=store.get("pp_calib",calib);
-if(store.get("pp_calib",null))$("calSub").textContent="Saved. Recalibrate any time";
+const savedCal=store.get("pp_cal2",null);
+if(savedCal&&typeof savedCal.z==="number"){calib=savedCal;$("calSub").textContent="Saved. Recalibrate any time";}
 
 function seg(id,attr,cb){$(id).addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;
   [...$(id).children].forEach(x=>x.setAttribute("aria-pressed",x===b));cb(b.dataset[attr]);});}
 seg("patternSeg","p",v=>pattern=v);seg("tempoSeg","s",v=>tempo=+v);seg("cupSeg","c",v=>cupScale=+v);
 
 function setChip(state,text){$("sensorChip").className="chip "+state;$("sensorState").textContent=text;}
+/* Convert beta/gamma to the "up" vector in phone coordinates (stable at any tilt, no gimbal jumps). */
 function onOrient(e){
-  if(e.beta==null)return;raw.b=e.beta;raw.g=e.gamma;sensorSeen=true;
+  if(e.beta==null||e.gamma==null)return;
+  const b=e.beta*Math.PI/180,g=e.gamma*Math.PI/180;
+  raw={x:-Math.cos(b)*Math.sin(g),y:Math.sin(b),z:Math.cos(b)*Math.cos(g)};sensorSeen=true;
   if(!hasSensor){hasSensor=true;setChip("on","Motion on");$("calBtn").disabled=false;$("noSensor").hidden=true;
     $("enableBtn").textContent="On";$("enableBtn").classList.add("done");$("enableBtn").disabled=true;$("motionSub").textContent="Live";}
 }
+/* iOS Safari: requestPermission must be the first async call inside a tap handler. */
 async function enableMotion(){
-  initAudio();
+  if(listening)return true;
+  let r="granted";
   try{
     if(typeof DeviceOrientationEvent!=="undefined"&&typeof DeviceOrientationEvent.requestPermission==="function"){
-      const r=await DeviceOrientationEvent.requestPermission();
-      if(r!=="granted"){showNoSensor("Motion was denied. Allow it in Safari settings for this site, then reload.");return;}
+      r=await DeviceOrientationEvent.requestPermission();
     }
-    window.addEventListener("deviceorientation",onOrient);
-    $("motionSub").textContent="Waiting for sensor…";
-    setTimeout(()=>{if(!sensorSeen)showNoSensor();},1500);
-  }catch(e){showNoSensor();}
+  }catch(e){r="error";}
+  initAudio();
+  if(r!=="granted"){
+    showNoSensor(location.protocol!=="https:"
+      ?"Motion needs an https:// link. Open the GitHub Pages address in Safari."
+      :"Motion access was blocked. Close this tab completely, reopen the link, tap Enable and choose Allow.");
+    return false;}
+  listening=true;
+  window.addEventListener("deviceorientation",onOrient);
+  $("motionSub").textContent="Waiting for sensor…";
+  setTimeout(()=>{if(!sensorSeen)showNoSensor("No motion data came through. On iPhone check Settings → Apps → Safari → Motion & Orientation Access is on.");},2000);
+  return true;
 }
 function showNoSensor(msg){$("noSensor").hidden=false;if(msg)$("noSensor").textContent=msg;setChip("off","Drag mode");$("motionSub").textContent="Not available";}
 $("enableBtn").onclick=enableMotion;
-$("calBtn").onclick=()=>{calib={b:raw.b,g:raw.g};store.set("pp_calib",calib);speak("Calibrated");beep(880,.08);
+$("calBtn").onclick=()=>{calib={...raw};store.set("pp_cal2",calib);speak("Calibrated");beep(880,.08);
   $("calSub").textContent="Saved. Recalibrate any time";$("calBtn").textContent="Done";$("calBtn").classList.add("done");
   setTimeout(()=>{$("calBtn").textContent="Calibrate";$("calBtn").classList.remove("done");},1600);};
 
 function readTilt(){
   if(dragTilt){tilt=dragTilt.t;dir={x:0,y:-1};return;}
   if(!hasSensor)return;
-  const db=raw.b-calib.b,dg=raw.g-calib.g,m=Math.hypot(db,dg);
-  tilt+=(Math.min(80,m)-tilt)*0.35;
-  if(m>1)dir={x:dg/m,y:db/m};
+  const dot=Math.max(-1,Math.min(1,raw.x*calib.x+raw.y*calib.y+raw.z*calib.z));
+  const ang=Math.acos(dot)*180/Math.PI;
+  tilt+=(Math.min(80,ang)-tilt)*0.35;
+  const dx=-(raw.x-calib.x),dy=raw.y-calib.y,m=Math.hypot(dx,dy);
+  if(m>0.02)dir={x:dx/m,y:dy/m};
 }
 
 function initAudio(){try{audio=audio||new (window.AudioContext||window.webkitAudioContext)();if(audio.state==="suspended")audio.resume();}catch(e){}}
@@ -356,7 +374,9 @@ function show(v){
   $("navTitle").textContent=v==="pour"?PATTERNS[pattern].name:v==="results"?"Your pour":"Pour Practice";
 }
 async function start(){
+  if(!hasSensor&&!listening)await enableMotion();
   initAudio();
+  $("dragHint").hidden=hasSensor||sensorSeen;
   try{if("wakeLock" in navigator)wakeLock=await navigator.wakeLock.request("screen");}catch(e){}
   log=[];phaseIdx=-2;running=true;t0=performance.now();lastTick=0;
   $("steps").innerHTML=phases().map(()=>"<i><b></b></i>").join("");
@@ -402,7 +422,7 @@ addEventListener("resize",()=>{if(running)resize();});
 function lerpC(a,b,u){return`rgb(${a.map((v,i)=>Math.round(v+(b[i]-v)*u)).join(",")})`}
 function draw(s){
   const W=cv.width,H=cv.height,d=devicePixelRatio||1;cx.clearRect(0,0,W,H);
-  const R=Math.min(W*.36,H*.40)*Math.min(1.05,cupScale),X=W/2,Y=H/2;
+  const R=Math.min(W*.34,H*.36)*Math.min(1.05,cupScale),X=W/2,Y=H/2;
   const inBand=s.idx<0||(tilt>=s.lo-.5&&tilt<=s.hi+.5);
   // target ring
   cx.lineWidth=5*d;cx.strokeStyle=s.idx<0?css("--line"):bandColor(s);
