@@ -175,6 +175,13 @@ canvas#chart{width:100%;height:160px;display:block}
             <button data-c="1" aria-pressed="true">8 oz</button>
             <button data-c="1.15" aria-pressed="false">12 oz</button>
           </div></div>
+        <div class="seg-cell"><label>Spout comes from</label>
+          <div class="seg" id="spoutSeg">
+            <button data-sp="auto" aria-pressed="true">Tilt side</button>
+            <button data-sp="left" aria-pressed="false">Left</button>
+            <button data-sp="bottom" aria-pressed="false">Me</button>
+            <button data-sp="right" aria-pressed="false">Right</button>
+          </div></div>
       </div>
     </section>
 
@@ -303,6 +310,12 @@ if(savedCal&&typeof savedCal.z==="number"){calib=savedCal;$("calSub").textConten
 function seg(id,attr,cb){$(id).addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;
   [...$(id).children].forEach(x=>x.setAttribute("aria-pressed",x===b));cb(b.dataset[attr]);});}
 seg("patternSeg","p",v=>pattern=v);seg("tempoSeg","s",v=>tempo=+v);seg("cupSeg","c",v=>cupScale=+v);
+/* Spout position: "auto" follows the low side of the cup; otherwise fixed. Angles are screen angles (0 = right, PI/2 = toward you). */
+let spoutMode=store.get("pp_spout","auto"),artAng=null,seed=0;
+const SPOUT_ANG={left:Math.PI,bottom:Math.PI/2,right:0};
+[...$("spoutSeg").children].forEach(b=>b.setAttribute("aria-pressed",b.dataset.sp===spoutMode));
+seg("spoutSeg","sp",v=>{spoutMode=v;store.set("pp_spout",v);});
+function spoutAngle(){return spoutMode==="auto"?Math.atan2(dir.y,dir.x):SPOUT_ANG[spoutMode];}
 
 function setChip(state,text){$("sensorChip").className="chip "+state;$("sensorState").textContent=text;}
 /* Convert beta/gamma to the "up" vector in phone coordinates (stable at any tilt, no gimbal jumps). */
@@ -341,13 +354,14 @@ $("calBtn").onclick=()=>{calib={...raw};store.set("pp_cal2",calib);speak("Calibr
   setTimeout(()=>{$("calBtn").textContent="Calibrate";$("calBtn").classList.remove("done");},1600);};
 
 function readTilt(){
-  if(dragTilt){tilt=dragTilt.t;dir={x:0,y:-1};return;}
+  if(dragTilt){tilt=dragTilt.t;const a=SPOUT_ANG[spoutMode]??Math.PI/2;dir={x:Math.cos(a),y:Math.sin(a)};return;}
   if(!hasSensor)return;
   const dot=Math.max(-1,Math.min(1,raw.x*calib.x+raw.y*calib.y+raw.z*calib.z));
   const ang=Math.acos(dot)*180/Math.PI;
   tilt+=(Math.min(80,ang)-tilt)*0.35;
   const dx=-(raw.x-calib.x),dy=raw.y-calib.y,m=Math.hypot(dx,dy);
-  if(m>0.02)dir={x:dx/m,y:dy/m};
+  if(m>0.02){ // smooth the direction so the pooled milk doesn't jitter
+    const nx=dir.x+(dx/m-dir.x)*.15,ny=dir.y+(dy/m-dir.y)*.15,n=Math.hypot(nx,ny)||1;dir={x:nx/n,y:ny/n};}
 }
 
 function initAudio(){try{audio=audio||new (window.AudioContext||window.webkitAudioContext)();if(audio.state==="suspended")audio.resume();}catch(e){}}
@@ -378,7 +392,7 @@ async function start(){
   initAudio();
   $("dragHint").hidden=hasSensor||sensorSeen;
   try{if("wakeLock" in navigator)wakeLock=await navigator.wakeLock.request("screen");}catch(e){}
-  log=[];phaseIdx=-2;running=true;t0=performance.now();lastTick=0;
+  log=[];phaseIdx=-2;running=true;artAng=null;seed=Math.random()*6.28;t0=performance.now();lastTick=0;
   $("steps").innerHTML=phases().map(()=>"<i><b></b></i>").join("");
   show("pour");resize();requestAnimationFrame(loop);
 }
@@ -428,7 +442,7 @@ function draw(s){
   cx.lineWidth=5*d;cx.strokeStyle=s.idx<0?css("--line"):bandColor(s);
   cx.beginPath();cx.arc(X,Y,R*1.2,0,7);cx.stroke();
   // handle on the pitcher-opposite side
-  const a=Math.atan2(dir.y,dir.x)+Math.PI;
+  const a=spoutAngle()+Math.PI;
   cx.save();cx.translate(X+Math.cos(a)*R*1.03,Y+Math.sin(a)*R*1.03);cx.rotate(a);
   cx.fillStyle=css("--cup");cx.shadowColor=css("--cup-shadow");cx.shadowBlur=8*d;
   rr(0,-R*.13,R*.28,R*.26,R*.13);cx.fill();cx.restore();
@@ -446,28 +460,52 @@ function draw(s){
   cx.fillStyle=g;cx.beginPath();cx.arc(lx,ly,lr,0,7);cx.fill();
   drawArt(s,lx,ly,R);cx.restore();
   // spout label
-  if(s.idx>=0&&tilt>4){const b=Math.atan2(dir.y,dir.x);cx.fillStyle=css("--muted");
+  if(s.idx>=0&&(tilt>4||spoutMode!=="auto")){const b=artAng??spoutAngle();cx.fillStyle=css("--muted");
     cx.font=`600 ${11*d}px -apple-system,system-ui,sans-serif`;cx.textAlign="center";
-    cx.fillText("SPOUT",X+Math.cos(b)*R*1.36,Y+Math.sin(b)*R*1.36+4*d);}
+    const c=Math.cos(b),sn=Math.sin(b);cx.textAlign=c>.5?"left":c<-.5?"right":"center";
+    const lx2=Math.max(2*d,Math.min(W-2*d,X+c*R*1.28));
+    cx.fillText("SPOUT",lx2,Y+sn*R*1.34+4*d);}
   if(tilt>50&&fill>.6){cx.fillStyle=css("--bad")+"33";cx.beginPath();cx.arc(X,Y,R*1.2,0,7);cx.fill();}
 }
 function rr(x,y,w,h,r){cx.beginPath();cx.moveTo(x+r,y);cx.arcTo(x+w,y,x+w,y+h,r);cx.arcTo(x+w,y+h,x,y+h,r);cx.arcTo(x,y+h,x,y,r);cx.arcTo(x,y,x+w,y,r);cx.closePath();}
+/* Art is drawn in a local frame: +y points at the spout, -y at the far rim.
+   The frame's angle is locked when the art starts, so poured milk never rotates. */
 function drawArt(s,lx,ly,R){
   if(s.idx<1)return;const k=s.idx;
+  if(artAng===null)artAng=spoutAngle();
   const art=log.filter(e=>e.idx>=1),q=art.length?art.filter(e=>e.tilt>=e.lo-.5&&e.tilt<=e.hi+.5).length/art.length:1;
-  cx.fillStyle="#fbf6ef";cx.globalAlpha=.6+.4*q;const wob=(1-q)*.35;
+  const wob=(1-q)*.12; // sloppier tilt = slightly lumpier art, but the shape never spins
+  cx.save();cx.translate(lx,ly);cx.rotate(artAng-Math.PI/2);
+  cx.fillStyle="#fbf6ef";cx.globalAlpha=.65+.35*q;
   if(pattern==="heart"){
-    const grow=k===1?s.u*.15:k===2?.15+s.u*.45:.6;blob(lx,ly-R*.05,R*grow,wob);
-    if(k===3){cx.beginPath();cx.moveTo(lx-R*grow*.15,ly+R*grow*.55);cx.lineTo(lx,ly+R*grow*(.5+1.05*s.u));cx.lineTo(lx+R*grow*.15,ly+R*grow*.55);cx.fill();}
+    // milk lands under the spout, then the push carries the circle toward the far rim
+    const grow=k===1?s.u*.15:k===2?.15+s.u*.45:.6, cy=R*(.3-.38*Math.min(1,(k-1+(k<3?s.u:1))/2));
+    if(k<3)blob(0,cy,R*grow,wob);
+    else{ // the cut drags the near edge through: circle morphs into a heart, lobes by the spout, point at the far rim
+      const r=R*grow,m=Math.min(1,s.u*1.3);cx.beginPath();
+      for(let t=0;t<=6.29;t+=.06){
+        const hx=16*Math.sin(t)**3/16, hy=(13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t)+2.5)/16;
+        const px=(1-m)*Math.sin(t)+m*hx*1.05, py=(1-m)*Math.cos(t)*.92+m*hy*1.05;
+        cx[t?"lineTo":"moveTo"](px*r,cy+py*r);}
+      cx.closePath();cx.fill();
+      cx.fillRect(-R*.012,cy-r*(.93+.3*m),R*.024,r*.3*m);}
   }else if(pattern==="tulip"){
-    const sz=[.34,.27,.2];for(let i=0;i<3;i++){const ph=i+1;if(k<ph)break;blob(lx,ly-R*.28+i*R*.2,R*sz[i]*(k===ph?s.u:1),wob);}
-    if(k===4)cx.fillRect(lx-R*.02,ly-R*.4,R*.04,R*.75*s.u);
-  }else if(k>=2){const n=k===2?Math.floor(s.u*9):9;
-    for(let i=0;i<n;i++){cx.beginPath();cx.ellipse(lx,ly-R*.5+i*R*.1,R*(.42-i*.03)*(1+Math.sin(i)*wob),R*.045,0,0,7);cx.fill();}
-    if(k===3)cx.fillRect(lx-R*.015,ly-R*.55,R*.03,R*s.u);}
-  cx.globalAlpha=1;
+    // first stack goes furthest, each new stack lands closer to the spout and pushes into the last
+    const sz=[.34,.27,.2],pos=[-.28,-.06,.14];
+    for(let i=0;i<3;i++){const ph=i+1;if(k<ph)break;blob(0,R*pos[i],R*sz[i]*(k===ph?s.u:1),wob,i);}
+    if(k===4){cx.fillRect(-R*.02,R*.32-R*.75*s.u,R*.04,R*.75*s.u);}
+  }else if(k>=2){
+    // leaves start at the far side and stack back toward the spout, then the cut runs forward
+    const n=k===2?Math.floor(s.u*9):9;
+    for(let i=0;i<n;i++){cx.beginPath();cx.ellipse(0,-R*.5+i*R*.1,R*(.42-i*.03)*(1+Math.sin(i+seed)*wob),R*.045,0,0,7);cx.fill();}
+    if(k===3){cx.fillRect(-R*.015,R*.42-R*1.0*s.u,R*.03,R*s.u);}
+  }
+  cx.restore();cx.globalAlpha=1;
 }
-function blob(x,y,r,wob){cx.beginPath();for(let a=0;a<=6.3;a+=.2){const q=r*(1+wob*Math.sin(a*3+r));cx[a?"lineTo":"moveTo"](x+Math.cos(a)*q,y+Math.sin(a)*q*.9);}cx.fill();}
+// smooth round blob; irregularity is fixed per pour so the outline doesn't rotate or morph as it grows
+function blob(x,y,r,wob,i=0){if(r<=0)return;cx.beginPath();
+  for(let a=0;a<=6.29;a+=.12){const q=r*(1+wob*(.6*Math.sin(2*a+seed+i)+.4*Math.sin(5*a+seed*2+i)));
+    cx[a?"lineTo":"moveTo"](x+Math.cos(a)*q,y+Math.sin(a)*q*.92);}cx.closePath();cx.fill();}
 
 /* drag fallback */
 let dragY=null;
@@ -492,7 +530,7 @@ function results(){
   $("verdict").textContent=total>=80?"Clean pour":total>=60?"Getting there":"Keep drilling";
   $("totalLabel").textContent=PATTERNS[pattern].name+" · "+(tempo>1?"Learn tempo":"Café speed");
   $("phaseScores").innerHTML=rows.map(r=>`<div class="cell"><div class="txt"><div class="ttl">${r.p.name}</div><div class="sub">${Math.round(r.inb*100)}% on target</div></div><span class="pill ${cls(r.score)}">${r.score}</span></div>`).join("");
-  const worst=rows.slice().sort((a,b)=>a.score-b.score)[0];
+  const worst=(rows.filter(r=>r.inb+r.low+r.high>0).sort((a,b)=>a.score-b.score)[0])||rows[0];
   const kind=worst.shake>1.1?"shaky":worst.low>worst.high?"low":"high";
   let tip=(TIPS[worst.p.key]||{})[kind]||"";
   if(!tip||worst.score>=85)tip="Solid across every phase. Switch to Café speed or try a harder pattern.";
